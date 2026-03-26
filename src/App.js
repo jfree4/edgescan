@@ -152,7 +152,9 @@ export default function App() {
       const res = await fetch("/api/markets");
       if (!res.ok) throw new Error(`Proxy API ${res.status}`);
       const data = await res.json();
-      const allMarkets = (data.markets || []).filter(isSportsMarket);
+      const allMarkets = (data.markets || [])
+        .filter(isSportsMarket)
+        .map(m => ({ ...m, _source: m.source || m._source || "kalshi" }));
 
       const meta = data.meta || {};
       console.log(`[EdgeScan] Proxy response — Kalshi: ${meta.kalshi} | Polymarket: ${meta.polymarket} | Total: ${meta.total}`);

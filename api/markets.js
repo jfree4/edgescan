@@ -107,17 +107,29 @@ async function fetchPolymarket() {
 
         let outcomePrices = [];
         try { outcomePrices = JSON.parse(m.outcomePrices || "[]"); } catch(_) {}
-        const yesPrice = outcomePrices[0] != null
+        // outcomePrices[0] = YES price, outcomePrices[1] = NO price (always sums to ~1.0)
+        // NEVER use the NO price as the YES ask — that's what caused the 86¢ spread bug
+        const yesLastPrice = outcomePrices[0] != null
           ? Math.round(parseFloat(outcomePrices[0]) * 100)
           : null;
+
+        // Use real order book bid/ask if available, otherwise estimate from last price
+        // bestBid and bestAsk are decimal (0-1), multiply by 100 to get cents
+        const yesBid = m.bestBid != null
+          ? Math.round(parseFloat(m.bestBid) * 100)
+          : (yesLastPrice != null ? Math.max(yesLastPrice - 2, 1) : null);
+        const yesAsk = m.bestAsk != null
+          ? Math.round(parseFloat(m.bestAsk) * 100)
+          : (yesLastPrice != null ? Math.min(yesLastPrice + 2, 99) : null);
+        const yesPrice = yesLastPrice;
 
         markets.push({
           id,
           ticker:        id,
           title:         m.question || ev.title || "Untitled",
           subtitle:      (ev.title && ev.title !== m.question) ? ev.title : "",
-          yes_bid:       m.bestBid       != null ? Math.round(parseFloat(m.bestBid)       * 100) : yesPrice,
-          yes_ask:       m.bestAsk       != null ? Math.round(parseFloat(m.bestAsk)       * 100) : yesPrice,
+          yes_bid:       yesBid,
+          yes_ask:       yesAsk,
           last_price:    m.lastTradePrice != null ? Math.round(parseFloat(m.lastTradePrice) * 100) : yesPrice,
           volume_24h:    m.volume24hr     ? Math.round(parseFloat(m.volume24hr))    : 0,
           open_interest: m.openInterest   ? Math.round(parseFloat(m.openInterest))  : 0,
