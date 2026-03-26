@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 const KALSHI_BASE = "https://api.elections.kalshi.com/trade-api/v2";
@@ -157,7 +157,6 @@ export default function App() {
       const meta = data.meta || {};
       console.log(`[EdgeScan] Proxy response — Kalshi: ${meta.kalshi} | Polymarket: ${meta.polymarket} | Total: ${meta.total}`);
 
-      const typed = allMarkets.map(m => detectMarketType(m));
       const singles = allMarkets.filter(m => detectMarketType(m) === "single");
       const multis  = allMarkets.filter(m => detectMarketType(m) === "multi");
       console.log(`[EdgeScan] After sports filter — Total: ${allMarkets.length} | Single: ${singles.length} | Multi: ${multis.length}`);
@@ -532,7 +531,7 @@ function MarketCard({ market: m, watched, onToggleWatch, onSelect }) {
         </div>
       </div>
 
-      <div style={{fontSize:"12px",color:"#c8e0f0",lineHeight:"1.4",marginBottom:"10px",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:"600",fontSize:"14px"}}>
+      <div style={{fontSize:"14px",color:"#c8e0f0",lineHeight:"1.4",marginBottom:"10px",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:"600"}}>
         {m.title||"Untitled"}
       </div>
 
