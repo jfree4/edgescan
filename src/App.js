@@ -109,6 +109,7 @@ export default function App() {
   const [wlLoaded,    setWlLoaded]   = useState(false);
   const [typeFilter,  setTypeFilter] = useState("all"); // all | single | multi
   const [timeWindow,  setTimeWindow] = useState("all"); // all | today | 48h | week
+  const [hideClosed,  setHideClosed] = useState(true);  // hide closed markets by default
   const PER_PAGE = 12;
 
   // ── Time window cutoff helper ──
@@ -231,6 +232,12 @@ export default function App() {
   });
 
   const sorted = [...enriched]
+    .filter(m => {
+      if (!hideClosed) return true;
+      // Filter out markets where close_time has already passed
+      if (!m.close_time) return true;
+      return new Date(m.close_time).getTime() > Date.now();
+    })
     .filter(m => m.edgeScore >= filterMin)
     .filter(m => typeFilter === "all" || m.marketType === typeFilter)
     .filter(m => {
@@ -255,6 +262,7 @@ export default function App() {
   const withVegas  = enriched.filter(m=>m.vegaProb!=null).length;
   const singleCount = enriched.filter(m=>m.marketType==="single").length;
   const multiCount  = enriched.filter(m=>m.marketType==="multi").length;
+  const closedCount = enriched.filter(m=>m.close_time && new Date(m.close_time).getTime() <= Date.now()).length;
 
   return (
     <div style={{ minHeight:"100vh", background:"#06090d", color:"#b8cfe0", fontFamily:"'JetBrains Mono','Fira Code','Courier New',monospace" }}>
@@ -331,10 +339,11 @@ export default function App() {
         {/* ── STATS BAR ── */}
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:"10px",marginBottom:"20px"}}>
           {[
-            {label:"MARKETS",      val:enriched.length,           color:"#40a8e0"},
-            {label:"HIGH EDGE",    val:highEdge,                  color:"#00ff9d"},
-            {label:"SINGLE-GAME",  val:singleCount,               color:"#a0d8a0"},
-            {label:"MULTI-LEG",    val:multiCount,                color:"#c888ff"},
+            {label:"MARKETS",      val:enriched.length,  color:"#40a8e0"},
+            {label:"HIGH EDGE",    val:highEdge,         color:"#00ff9d"},
+            {label:"SINGLE-GAME",  val:singleCount,      color:"#a0d8a0"},
+            {label:"MULTI-LEG",    val:multiCount,       color:"#c888ff"},
+            {label:"CLOSED",       val:closedCount,      color:hideClosed?"#e05050":"#4a6a8a"},
           ].map(s=>(
             <div key={s.label} style={{background:"#0a1220",border:"1px solid #122030",borderRadius:"5px",padding:"12px 16px"}}>
               <div style={{fontSize:"9px",color:"#2a4a68",letterSpacing:".1em",marginBottom:"5px"}}>{s.label}</div>
@@ -404,6 +413,15 @@ export default function App() {
                   {l}
                 </button>
               ))}
+            </div>
+            <div style={{display:"flex",gap:"5px",alignItems:"center"}}>
+              <span style={{fontSize:"9px",color:"#2a4a68",letterSpacing:".1em",marginRight:"4px"}}>STATUS:</span>
+              <button
+                className={`sbtn ${hideClosed?"act":""}`}
+                style={hideClosed?{color:"#00ff9d",borderColor:"#00ff9d60",background:"#060d18"}:{}}
+                onClick={()=>{setHideClosed(h=>!h);setPage(1);}}>
+                {hideClosed ? "✓ HIDE CLOSED" : "SHOW CLOSED"}
+              </button>
             </div>
             <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:"10px",minWidth:"200px"}}>
               <span style={{fontSize:"10px",color:"#2a4a68",whiteSpace:"nowrap"}}>MIN: <strong style={{color:"#6a90b0"}}>{filterMin}</strong></span>
