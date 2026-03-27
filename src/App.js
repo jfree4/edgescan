@@ -165,7 +165,6 @@ export default function App() {
         ),
       }));
 
-      const meta = data.meta || {};
       const kalshiCount = allMarkets.filter(m => m._source === "kalshi").length;
       const polyCount   = allMarkets.filter(m => m._source === "polymarket").length;
       console.log(`[EdgeScan] Proxy — Kalshi: ${kalshiCount} | Polymarket: ${polyCount} | Total: ${allMarkets.length}`);
