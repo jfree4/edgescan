@@ -21,16 +21,28 @@ const isSports = m => {
   return SPORTS_KEYWORDS.some(k => t.includes(k));
 };
 
+// Known Kalshi multi-leg/bundle ticker prefixes — everything else is single-game
 const MULTI_PREFIXES = [
   "KXMVESPORTSMULTIGAMEEXTENDED",
   "KXMVECROSSCATEGORY",
   "KXMVECBCHAMPIONSHIP",
-  "KXMVE",
+  "KXMVE",  // catch-all for remaining bundle variants
+];
+
+// Known Kalshi single-game sport series prefixes
+const SINGLE_GAME_PREFIXES = [
+  "KXNBA", "KXNFL", "KXMLB", "KXNHL", "KXMLS",
+  "KXUFC", "KXPGA", "KXNCAAB", "KXNCAAF", "KXNASCAR",
+  "KXNBA", "KXCBB",  // college basketball
 ];
 
 const marketType = m => {
   const ticker = (m.ticker || "").toUpperCase();
+  // Explicitly multi-leg
   if (MULTI_PREFIXES.some(p => ticker.startsWith(p))) return "multi";
+  // Explicitly single-game sport series
+  if (SINGLE_GAME_PREFIXES.some(p => ticker.startsWith(p))) return "single";
+  // Title-based fallback
   const tl = (m.title || "").toLowerCase();
   if (/\bparlay\b|\bmulti-leg\b|\bmultileg\b/.test(tl)) return "multi";
   return "single";
@@ -38,28 +50,57 @@ const marketType = m => {
 
 async function fetchKalshi() {
   try {
-    const res  = await fetch(`${KALSHI_BASE}/markets?status=open&limit=1000`);
-    if (!res.ok) return [];
-    const data = await res.json();
-    return (data.markets || [])
-      .filter(isSports)
-      .map(m => ({
-        id:            m.ticker,
-        ticker:        m.ticker,
-        title:         m.title || "Untitled",
-        subtitle:      m.subtitle || "",
-        yes_bid:       m.yes_bid,
-        yes_ask:       m.yes_ask,
-        last_price:    m.last_price,
-        volume_24h:    m.volume_24h,
-        open_interest: m.open_interest,
-        close_time:    m.close_time,
-        event_ticker:  m.event_ticker,
-        status:        m.status,
-        marketType:    marketType(m),
-        source:        "kalshi",
-        url:           `https://kalshi.com/markets/${m.event_ticker}`,
-      }));
+    // Fetch both the general markets endpoint AND the events endpoint
+    // Single-game markets on Kalshi live under specific sport event series
+    // General markets endpoint (mostly bundles/parlays)
+    const generalRes  = await fetch(`${KALSHI_BASE}/markets?status=open&limit=1000`);
+    const generalData = generalRes.ok ? await generalRes.json() : { markets: [] };
+    const generalMarkets = generalData.markets || [];
+
+    // Events endpoint - this surfaces individual game markets
+    // Kalshi organizes single games under event series like KXNBA, KXNHL, KXMLB etc.
+    const eventSeriesRes  = await fetch(`${KALSHI_BASE}/events?status=open&with_nested_markets=true&limit=200`);
+    const eventSeriesData = eventSeriesRes.ok ? await eventSeriesRes.json() : { events: [] };
+    const eventMarkets = (eventSeriesData.events || []).flatMap(ev =>
+      (ev.markets || []).map(m => ({
+        ...m,
+        event_ticker: ev.event_ticker || m.event_ticker,
+        subtitle:     m.subtitle || ev.title || ev.sub_title || "",
+      }))
+    );
+
+    // Deduplicate and merge
+    const seen = new Set();
+    const allKalshi = [...generalMarkets, ...eventMarkets].filter(m => {
+      if (!m.ticker || seen.has(m.ticker)) return false;
+      seen.add(m.ticker);
+      return true;
+    });
+
+    const sports = allKalshi.filter(isSports);
+    console.log(`Kalshi: ${allKalshi.length} total, ${sports.length} sports`);
+    console.log("Kalshi single-game samples:", sports
+      .filter(m => !MULTI_PREFIXES.some(p => (m.ticker||"").toUpperCase().startsWith(p)))
+      .slice(0,5).map(m => `${m.ticker} | ${m.title}`)
+    );
+
+    return sports.map(m => ({
+      id:            m.ticker,
+      ticker:        m.ticker,
+      title:         m.title || "Untitled",
+      subtitle:      m.subtitle || "",
+      yes_bid:       m.yes_bid,
+      yes_ask:       m.yes_ask,
+      last_price:    m.last_price,
+      volume_24h:    m.volume_24h,
+      open_interest: m.open_interest,
+      close_time:    m.close_time,
+      event_ticker:  m.event_ticker,
+      status:        m.status,
+      marketType:    marketType(m),
+      source:        "kalshi",
+      url:           `https://kalshi.com/markets/${m.event_ticker || m.ticker}`,
+    }));
   } catch(e) {
     console.error("Kalshi fetch error:", e.message);
     return [];
