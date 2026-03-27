@@ -50,24 +50,32 @@ const marketType = m => {
 
 async function fetchKalshi() {
   try {
-    // Fetch both the general markets endpoint AND the events endpoint
-    // Single-game markets on Kalshi live under specific sport event series
-    // General markets endpoint (mostly bundles/parlays)
+    // Fetch general markets endpoint (multi-leg bundles)
     const generalRes  = await fetch(`${KALSHI_BASE}/markets?status=open&limit=1000`);
     const generalData = generalRes.ok ? await generalRes.json() : { markets: [] };
     const generalMarkets = generalData.markets || [];
 
-    // Events endpoint - this surfaces individual game markets
-    // Kalshi organizes single games under event series like KXNBA, KXNHL, KXMLB etc.
-    const eventSeriesRes  = await fetch(`${KALSHI_BASE}/events?status=open&with_nested_markets=true&limit=200`);
-    const eventSeriesData = eventSeriesRes.ok ? await eventSeriesRes.json() : { events: [] };
-    const eventMarkets = (eventSeriesData.events || []).flatMap(ev =>
-      (ev.markets || []).map(m => ({
-        ...m,
-        event_ticker: ev.event_ticker || m.event_ticker,
-        subtitle:     m.subtitle || ev.title || ev.sub_title || "",
-      }))
+    // Fetch single-game markets from known sports event series only
+    // Using series_ticker param to scope to sports — avoids pulling TV/politics/etc.
+    const SPORT_SERIES = [
+      "KXNBA","KXNFL","KXMLB","KXNHL","KXMLS",
+      "KXUFC","KXPGA","KXNCAAB","KXNCAAF","KXNASCAR","KXCBB"
+    ];
+
+    const seriesResults = await Promise.allSettled(
+      SPORT_SERIES.map(series =>
+        fetch(`${KALSHI_BASE}/events?series_ticker=${series}&status=open&with_nested_markets=true&limit=100`)
+          .then(r => r.ok ? r.json() : { events: [] })
+          .then(d => (d.events || []).flatMap(ev =>
+            (ev.markets || []).map(m => ({
+              ...m,
+              event_ticker: ev.event_ticker || m.event_ticker,
+              subtitle:     m.subtitle || ev.title || ev.sub_title || "",
+            }))
+          ))
+      )
     );
+    const eventMarkets = seriesResults.flatMap(r => r.status === "fulfilled" ? r.value : []);
 
     // Deduplicate and merge
     const seen = new Set();
@@ -77,8 +85,9 @@ async function fetchKalshi() {
       return true;
     });
 
+    // Filter to sports — this now catches both bundle and single-game sports markets
     const sports = allKalshi.filter(isSports);
-    console.log(`Kalshi: ${allKalshi.length} total, ${sports.length} sports`);
+    console.log(`Kalshi: ${allKalshi.length} total, ${sports.length} sports, ${eventMarkets.length} from sport series`);
     console.log("Kalshi single-game samples:", sports
       .filter(m => !MULTI_PREFIXES.some(p => (m.ticker||"").toUpperCase().startsWith(p)))
       .slice(0,5).map(m => `${m.ticker} | ${m.title}`)
