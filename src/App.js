@@ -107,9 +107,10 @@ export default function App() {
   const [keyInput,    setKeyInput]   = useState("");
   const [watchlist,   setWatchlist]  = useState(new Set());
   const [wlLoaded,    setWlLoaded]   = useState(false);
-  const [typeFilter,  setTypeFilter] = useState("all"); // all | single | multi
-  const [timeWindow,  setTimeWindow] = useState("all"); // all | today | 48h | week
-  const [hideClosed,  setHideClosed] = useState(true);  // hide closed markets by default
+  const [typeFilter,   setTypeFilter]  = useState("all"); // all | single | multi
+  const [timeWindow,   setTimeWindow]  = useState("all"); // all | today | 48h | week
+  const [hideClosed,   setHideClosed]  = useState(true);
+  const [sourceFilter, setSourceFilter]= useState("all"); // all | kalshi | polymarket
   const PER_PAGE = 12;
 
   // ── Time window cutoff helper ──
@@ -146,36 +147,45 @@ export default function App() {
   }, [saveWatchlist]);
 
   // ── Fetch all markets via our Vercel proxy (/api/markets) ──
-  // The proxy handles Kalshi + Polymarket server-side, bypassing CORS restrictions.
   const fetchKalshi = useCallback(async () => {
     setLoading(true); setError(null);
     try {
       const res = await fetch("/api/markets");
       if (!res.ok) throw new Error(`Proxy API ${res.status}`);
       const data = await res.json();
-      const allMarkets = (data.markets || [])
-        .filter(isSportsMarket)
-        .map(m => ({ ...m, _source: m.source || m._source || "kalshi" }));
+      // Proxy already filters for sports — don't double-filter here
+      // Map source → _source and ensure _url is set for all markets
+      const allMarkets = (data.markets || []).map(m => ({
+        ...m,
+        _source: m.source || m._source || "kalshi",
+        _url:    m.url || m._url || (
+          m.source === "polymarket"
+            ? `https://polymarket.com/event/${m.event_ticker || m.ticker}`
+            : `https://kalshi.com/markets/${m.event_ticker || m.ticker}`
+        ),
+      }));
 
       const meta = data.meta || {};
-      console.log(`[EdgeScan] Proxy response — Kalshi: ${meta.kalshi} | Polymarket: ${meta.polymarket} | Total: ${meta.total}`);
-
-      const singles = allMarkets.filter(m => detectMarketType(m) === "single");
-      const multis  = allMarkets.filter(m => detectMarketType(m) === "multi");
-      console.log(`[EdgeScan] After sports filter — Total: ${allMarkets.length} | Single: ${singles.length} | Multi: ${multis.length}`);
-      console.log("[EdgeScan] SINGLE samples:", singles.slice(0,8).map(m => `[${m._source}] ${m.title} | closes: ${m.close_time}`));
+      const kalshiCount = allMarkets.filter(m => m._source === "kalshi").length;
+      const polyCount   = allMarkets.filter(m => m._source === "polymarket").length;
+      console.log(`[EdgeScan] Proxy — Kalshi: ${kalshiCount} | Polymarket: ${polyCount} | Total: ${allMarkets.length}`);
+      console.log("[EdgeScan] Kalshi samples:", allMarkets.filter(m=>m._source==="kalshi").slice(0,4).map(m=>`${m.title} | ${m._url}`));
+      console.log("[EdgeScan] Poly samples:",   allMarkets.filter(m=>m._source==="polymarket").slice(0,4).map(m=>`${m.title} | ${m._url}`));
 
       setMarkets(allMarkets);
       setLastFetch(new Date());
       setPage(1);
     } catch(e) {
-      // Fallback: try Kalshi directly if proxy not available (local dev without proxy)
       console.warn("[EdgeScan] Proxy unavailable, falling back to Kalshi direct:", e.message);
       try {
         const res  = await fetch(`${KALSHI_BASE}/markets?status=open&limit=1000`);
         if (!res.ok) throw new Error(`Kalshi API ${res.status}`);
         const data = await res.json();
-        const markets = (data.markets || []).filter(isSportsMarket).map(m => ({...m, _source:"kalshi"}));
+        const markets = (data.markets || []).filter(isSportsMarket).map(m => ({
+          ...m,
+          _source: "kalshi",
+          _url:    `https://kalshi.com/markets/${m.event_ticker || m.ticker}`,
+        }));
         setMarkets(markets);
         setLastFetch(new Date());
         setPage(1);
@@ -234,12 +244,12 @@ export default function App() {
   const sorted = [...enriched]
     .filter(m => {
       if (!hideClosed) return true;
-      // Filter out markets where close_time has already passed
       if (!m.close_time) return true;
       return new Date(m.close_time).getTime() > Date.now();
     })
     .filter(m => m.edgeScore >= filterMin)
     .filter(m => typeFilter === "all" || m.marketType === typeFilter)
+    .filter(m => sourceFilter === "all" || m._source === sourceFilter)
     .filter(m => {
       const cutoff = getWindowCutoff(timeWindow);
       if (!cutoff) return true;
@@ -249,7 +259,7 @@ export default function App() {
     .sort((a,b) => {
       if (sortBy==="edge")    return b.edgeScore - a.edgeScore;
       if (sortBy==="volume")  return (b.volume_24h||0) - (a.volume_24h||0);
-      if (sortBy==="closes")  return new Date(a.close_time) - new Date(b.close_time);
+      if (sortBy==="closes")  return new Date(a.close_time||"9999") - new Date(b.close_time||"9999");
       if (sortBy==="spread")  return ((b.yes_ask||0)-(b.yes_bid||0)) - ((a.yes_ask||0)-(a.yes_bid||0));
       if (sortBy==="vega")    return (b.vegaProb!=null?1:0) - (a.vegaProb!=null?1:0);
       return 0;
@@ -379,8 +389,23 @@ export default function App() {
           <div style={{display:"flex",alignItems:"center",gap:"12px",marginBottom:"16px",background:"#08111c",border:"1px solid #0e2030",borderRadius:"5px",padding:"12px 16px",flexWrap:"wrap"}}>
             <div style={{display:"flex",gap:"5px",alignItems:"center"}}>
               <span style={{fontSize:"9px",color:"#2a4a68",letterSpacing:".1em",marginRight:"4px"}}>SORT:</span>
-              {[["edge","EDGE"],["volume","VOLUME"],["closes","CLOSING"],["spread","SPREAD"],["vega","VEGAS MATCH"]].map(([k,l])=>(
+              {[["edge","EDGE"],["closes","SOONEST"],["volume","VOLUME"],["spread","SPREAD"],["vega","VEGAS"]].map(([k,l])=>(
                 <button key={k} className={`sbtn ${sortBy===k?"act":""}`} onClick={()=>{setSortBy(k);setPage(1);}}>{l}</button>
+              ))}
+            </div>
+            <div style={{display:"flex",gap:"5px",alignItems:"center"}}>
+              <span style={{fontSize:"9px",color:"#2a4a68",letterSpacing:".1em",marginRight:"4px"}}>PLATFORM:</span>
+              {[
+                ["all",        "ALL",        "#40a8e0"],
+                ["kalshi",     "KALSHI",     "#40a8e0"],
+                ["polymarket", "POLYMARKET", "#9a70ff"],
+              ].map(([k,l,c])=>(
+                <button key={k}
+                  className={`sbtn ${sourceFilter===k?"act":""}`}
+                  style={sourceFilter===k ? {color:c, borderColor:c+"60", background:"#060d18"} : {}}
+                  onClick={()=>{setSourceFilter(k);setPage(1);}}>
+                  {l}
+                </button>
               ))}
             </div>
             <div style={{display:"flex",gap:"5px",alignItems:"center"}}>
@@ -695,6 +720,7 @@ function MarketDetail({ market: m, watched, onToggleWatch, onClose }) {
           ["24H VOLUME",    fmtVol(m.volume_24h),                   "#c8e0f0"],
           ["OPEN INTEREST", fmtVol(m.open_interest),                "#c8e0f0"],
           ["CLOSES IN",     timeUntil(m.close_time),                "#c8e0f0"],
+          ["SOURCE",        (m._source||"—").toUpperCase(),         m._source==="polymarket"?"#9a70ff":"#40a8e0"],
           ["STATUS",        (m.status||"—").toUpperCase(),          "#40a8e0"],
         ].map(([l,v,c])=>(
           <div className="row" key={l}>
@@ -705,8 +731,18 @@ function MarketDetail({ market: m, watched, onToggleWatch, onClose }) {
       </div>
 
       <div style={{marginTop:"16px",textAlign:"center"}}>
-        <a href={m._url || `https://kalshi.com/markets/${m.event_ticker}`} target="_blank" rel="noopener noreferrer"
-          style={{display:"inline-block",padding:"9px 22px",background:"#061828",border:`1px solid ${m._source==="polymarket"?"#5a40a0":"#1a5080"}`,borderRadius:"4px",color:m._source==="polymarket"?"#9a70ff":"#40a8e0",fontSize:"11px",letterSpacing:".08em",textDecoration:"none",fontFamily:"inherit"}}>
+        <a
+          href={m._url || (m._source==="polymarket"
+            ? `https://polymarket.com/event/${m.event_ticker||m.ticker}`
+            : `https://kalshi.com/markets/${m.event_ticker||m.ticker}`
+          )}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{display:"inline-block",padding:"9px 22px",background:"#061828",
+            border:`1px solid ${m._source==="polymarket"?"#5a40a0":"#1a5080"}`,
+            borderRadius:"4px",
+            color:m._source==="polymarket"?"#9a70ff":"#40a8e0",
+            fontSize:"11px",letterSpacing:".08em",textDecoration:"none",fontFamily:"inherit"}}>
           {m._source==="polymarket" ? "OPEN ON POLYMARKET →" : "OPEN ON KALSHI →"}
         </a>
       </div>
